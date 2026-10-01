@@ -83,6 +83,9 @@ def type_name(value) -> str:
     """返回 MiniLang 视角的类型名。"""
     if value is None:
         return "null"
+    # bool 是 int 的子类，必须先判断 bool，否则 true/false 会被当成 int
+    if isinstance(value, bool):
+        return "bool"
     if isinstance(value, int):
         return "int"
     if isinstance(value, float):

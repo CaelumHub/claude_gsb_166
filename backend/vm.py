@@ -422,6 +422,7 @@ class VM:
         args.reverse()
         callee = frame.stack.pop()
         if isinstance(callee, rt.BuiltinFunction):
+            self._check_builtin_arity(callee, args)
             if self.profiler:
                 self.profiler.function_enter("builtin:" + callee.name)
             try:
@@ -482,6 +483,14 @@ class VM:
     def _type_error(self, ins, expected, actual):
         self._runtime_error(diag.runtime_wrong_type(
             expected, actual, ins.line, 1, self._line(ins.line)))
+
+    def _check_builtin_arity(self, callee, args):
+        """内置函数参数个数检查：定长必须相等，变长至少 min_arity 个。"""
+        n = len(args)
+        if callee.arity is not None and n != callee.arity:
+            self._builtin_arity_error(callee.name, callee.arity, n)
+        elif callee.min_arity is not None and n < callee.min_arity:
+            self._builtin_arity_error(callee.name, callee.min_arity, n, at_least=True)
 
     def _check_numeric(self, a, b, ins):
         if not (isinstance(a, (int, float)) and not isinstance(a, bool)
@@ -597,17 +606,32 @@ class VM:
         elif len(args) == 3:
             start, stop, step = args
         else:
-            self._builtin_type_error("1~3 个参数", str(len(args)))
-        return self.heap.allocate_list(list(range(start, stop + 1, step)))
+            self._builtin_arity_error("range", "1~3", len(args))
+        for a in (start, stop, step):
+            if not isinstance(a, int) or isinstance(a, bool):
+                self._builtin_type_error("整数参数", rt.type_name(a))
+        if step == 0:
+            line = self._cur_line or 1
+            self._runtime_error(diag.runtime_range_step_zero(line, 1, self._line(line)))
+        # 与 Python 一致：stop 排他，range(0, 3) -> [0, 1, 2]
+        return self.heap.allocate_list(list(range(start, stop, step)))
 
     def _bi_abs(self, args):
         return abs(args[0])
 
     def _bi_min(self, args):
-        return min(args)
+        try:
+            return min(args)
+        except TypeError:
+            self._builtin_type_error("可相互比较的同类型参数",
+                                     "、".join(rt.type_name(a) for a in args))
 
     def _bi_max(self, args):
-        return max(args)
+        try:
+            return max(args)
+        except TypeError:
+            self._builtin_type_error("可相互比较的同类型参数",
+                                     "、".join(rt.type_name(a) for a in args))
 
     def _bi_sqrt(self, args):
         return math.sqrt(args[0])
@@ -619,9 +643,18 @@ class VM:
         return int(math.ceil(args[0]))
 
     def _bi_round(self, args):
+        if len(args) > 2:
+            self._builtin_arity_error("round", "1~2", len(args))
+        v = args[0]
+        if not isinstance(v, (int, float)) or isinstance(v, bool):
+            self._builtin_type_error("数字", rt.type_name(v))
         if len(args) == 2:
-            return round(args[0], args[1])
-        return round(args[0], 1)
+            ndigits = args[1]
+            if not isinstance(ndigits, int) or isinstance(ndigits, bool):
+                self._builtin_type_error("整数", rt.type_name(ndigits))
+            return round(v, ndigits)
+        # 单参数：四舍五入到整数（与 Python 的 round(x) 一致）
+        return round(v)
 
     def _bi_input(self, args):
         if self.input_queue:
@@ -643,6 +676,11 @@ class VM:
         line = self._cur_line or 1
         self._runtime_error(diag.runtime_wrong_type(
             expected, actual, line, 1, self._line(line)))
+
+    def _builtin_arity_error(self, name, expected, got, at_least=False):
+        line = self._cur_line or 1
+        self._runtime_error(diag.runtime_wrong_arity(
+            name, expected, got, line, 1, self._line(line), at_least=at_least))
 
 
 # ---------------------------------------------------------------------------

@@ -220,9 +220,27 @@ def semantic_redeclared(name, prev_line, line, col, source_line):
 def semantic_wrong_arity(name, expected, got, line, col, source_line):
     return Diagnostic(
         SEVERITY_ERROR, PHASE_SEMANTIC, KIND_ARITY,
-        f"函数 {name!r} 需要 {got} 个参数，但传入了 {expected} 个",
+        f"函数 {name!r} 需要 {expected} 个参数，但传入了 {got} 个",
         line, col, 1, line, col + 1,
         f"调整调用处的实参个数为 {expected} 个，或修改函数定义。",
+        None, source_line)
+
+
+def runtime_wrong_arity(name, expected, got, line, col, source_line, at_least=False):
+    quant = "至少需要" if at_least else "需要"
+    return Diagnostic(
+        SEVERITY_ERROR, PHASE_RUNTIME, KIND_ARITY,
+        f"函数 {name!r} {quant} {expected} 个参数，但传入了 {got} 个",
+        line, col, 1, line, col + 1,
+        f"把调用处的实参个数调整为 {expected} 个。",
+        None, source_line)
+
+
+def runtime_range_step_zero(line, col, source_line):
+    return Diagnostic(
+        SEVERITY_ERROR, PHASE_RUNTIME, KIND_RUNTIME,
+        "range() 的步长不能为 0", line, col, 1, line, col + 1,
+        "把步长改为非零整数，例如 range(0, 10, 2)。",
         None, source_line)
 
 
