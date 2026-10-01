@@ -16,6 +16,7 @@
 import math
 import time
 import random as _random
+from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Dict, Any, Optional
 
 from . import bytecode as bc
@@ -106,18 +107,18 @@ class VM:
         b["str"] = rt.BuiltinFunction("str", self._bi_str, 1)
         b["int"] = rt.BuiltinFunction("int", self._bi_int, 1)
         b["float"] = rt.BuiltinFunction("float", self._bi_float, 1)
-        b["range"] = rt.BuiltinFunction("range", self._bi_range, None)
+        b["range"] = rt.BuiltinFunction("range", self._bi_range, None, min_arity=1, max_arity=3)
         b["abs"] = rt.BuiltinFunction("abs", self._bi_abs, 1)
         b["min"] = rt.BuiltinFunction("min", self._bi_min, None, min_arity=1)
         b["max"] = rt.BuiltinFunction("max", self._bi_max, None, min_arity=1)
         b["sqrt"] = rt.BuiltinFunction("sqrt", self._bi_sqrt, 1)
         b["floor"] = rt.BuiltinFunction("floor", self._bi_floor, 1)
         b["ceil"] = rt.BuiltinFunction("ceil", self._bi_ceil, 1)
-        b["round"] = rt.BuiltinFunction("round", self._bi_round, None, min_arity=1)
+        b["round"] = rt.BuiltinFunction("round", self._bi_round, None, min_arity=1, max_arity=2)
         b["input"] = rt.BuiltinFunction("input", self._bi_input, 0)
         b["time"] = rt.BuiltinFunction("time", self._bi_time, 0)
         b["random"] = rt.BuiltinFunction("random", self._bi_random, 0)
-        b["exit"] = rt.BuiltinFunction("exit", self._bi_exit, None, min_arity=0)
+        b["exit"] = rt.BuiltinFunction("exit", self._bi_exit, None, min_arity=0, max_arity=1)
         self.builtins = b
 
     # ------------------------------------------------------------------
@@ -422,6 +423,7 @@ class VM:
         args.reverse()
         callee = frame.stack.pop()
         if isinstance(callee, rt.BuiltinFunction):
+            self._check_builtin_arity(ins, callee, len(args))
             if self.profiler:
                 self.profiler.function_enter("builtin:" + callee.name)
             try:
@@ -438,9 +440,21 @@ class VM:
             return
         self._type_error(ins, "函数", rt.type_name(callee))
 
+    def _check_builtin_arity(self, ins, func, argc):
+        min_arity = func.min_arity
+        max_arity = func.max_arity
+        if min_arity is not None and argc < min_arity:
+            expected = (min_arity, max_arity)
+        elif max_arity is not None and argc > max_arity:
+            expected = (min_arity, max_arity)
+        else:
+            return
+        self._runtime_error(diag.runtime_wrong_arity(
+            func.name, expected, argc, ins.line, 1, self._line(ins.line)))
+
     def _call_user(self, ins, frame, func, args):
         if len(args) != func.arity:
-            self._runtime_error(diag.semantic_wrong_arity(
+            self._runtime_error(diag.runtime_wrong_arity(
                 func.name, func.arity, len(args), ins.line, 1, self._line(ins.line)))
         if len(self.frames) >= self.max_call_depth:
             self._runtime_error(diag.runtime_stack_overflow(
@@ -594,20 +608,41 @@ class VM:
             stop = args[0]
         elif len(args) == 2:
             start, stop = args
-        elif len(args) == 3:
-            start, stop, step = args
         else:
-            self._builtin_type_error("1~3 个参数", str(len(args)))
-        return self.heap.allocate_list(list(range(start, stop + 1, step)))
+            start, stop, step = args
+
+        for v in (start, stop, step):
+            if not isinstance(v, int) or isinstance(v, bool):
+                self._builtin_type_error("整数", rt.type_name(v))
+        if step == 0:
+            self._builtin_type_error("非零步长", "0")
+        return self.heap.allocate_list(list(range(start, stop, step)))
 
     def _bi_abs(self, args):
         return abs(args[0])
 
     def _bi_min(self, args):
-        return min(args)
+        return self._minmax(args, min)
 
     def _bi_max(self, args):
-        return max(args)
+        return self._minmax(args, max)
+
+    def _minmax(self, args, choose):
+        def order_key(value):
+            if isinstance(value, (int, float)):
+                return (1, value)
+            if isinstance(value, (str, rt.RuntimeString)):
+                return (2, _to_py_str(value))
+            self._builtin_type_error(
+                "可比较的数字或字符串参数", rt.type_name(value))
+
+        keys = [order_key(v) for v in args]
+        category = keys[0][0]
+        for index, (value, key) in enumerate(zip(args, keys)):
+            if key[0] != category:
+                self._builtin_type_error("同类型可比较参数", rt.type_name(value))
+        index = choose(range(len(args)), key=lambda i: (keys[i][1], i))
+        return args[index]
 
     def _bi_sqrt(self, args):
         return math.sqrt(args[0])
@@ -619,9 +654,22 @@ class VM:
         return int(math.ceil(args[0]))
 
     def _bi_round(self, args):
-        if len(args) == 2:
-            return round(args[0], args[1])
-        return round(args[0], 1)
+        value = args[0]
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            self._builtin_type_error("数字", rt.type_name(value))
+        if len(args) == 1:
+            digits = 0
+        else:
+            digits = args[1]
+            if not isinstance(digits, int) or isinstance(digits, bool):
+                self._builtin_type_error("整数", rt.type_name(digits))
+
+        number = Decimal(str(value))
+        quant = Decimal(1).scaleb(-digits)
+        rounded = number.quantize(quant, rounding=ROUND_HALF_UP)
+        if digits <= 0:
+            return int(rounded)
+        return float(rounded)
 
     def _bi_input(self, args):
         if self.input_queue:

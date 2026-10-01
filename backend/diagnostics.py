@@ -217,12 +217,43 @@ def semantic_redeclared(name, prev_line, line, col, source_line):
         None, source_line)
 
 
+def _arity_text(expected) -> str:
+    """把参数个数要求格式化为报错文案中的数量描述。"""
+    if isinstance(expected, int):
+        return str(expected)
+    min_arity, max_arity = expected
+    if max_arity is None:
+        return f"至少 {min_arity}" if min_arity else "任意数量"
+    if min_arity == 0:
+        return f"至多 {max_arity}"
+    if min_arity == max_arity:
+        return str(min_arity)
+    return f"{min_arity}~{max_arity}"
+
+
 def semantic_wrong_arity(name, expected, got, line, col, source_line):
+    expected_text = _arity_text(expected)
+    if isinstance(expected, int) or (
+        isinstance(expected, tuple) and expected[0] == expected[1]
+    ):
+        fix = f"调整调用处的实参个数为 {expected_text} 个，或修改函数定义。"
+    else:
+        fix = f"调整调用处的实参个数（需要 {expected_text} 个），或修改函数定义。"
     return Diagnostic(
         SEVERITY_ERROR, PHASE_SEMANTIC, KIND_ARITY,
-        f"函数 {name!r} 需要 {got} 个参数，但传入了 {expected} 个",
+        f"函数 {name!r} 需要 {expected_text} 个参数，但传入了 {got} 个",
         line, col, 1, line, col + 1,
-        f"调整调用处的实参个数为 {expected} 个，或修改函数定义。",
+        fix,
+        None, source_line)
+
+
+def runtime_wrong_arity(name, expected, got, line, col, source_line):
+    expected_text = _arity_text(expected)
+    return Diagnostic(
+        SEVERITY_ERROR, PHASE_RUNTIME, KIND_ARITY,
+        f"函数 {name!r} 需要 {expected_text} 个参数，但传入了 {got} 个",
+        line, col, 1, line, col + 1,
+        f"调整调用处的实参个数（需要 {expected_text} 个）。",
         None, source_line)
 
 

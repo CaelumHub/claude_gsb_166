@@ -46,6 +46,7 @@ def run_all():
     _test_parser()
     _test_semantic()
     _test_vm_basic()
+    _test_builtins()
     _test_functions_recursion()
     _test_control_flow()
     _test_lists()
@@ -104,6 +105,27 @@ def _test_vm_basic():
     out = _run("var x = 2 + 3 * 4;\nprint(x);\nprint(\"hello\");")
     ok = out.get("ok") and out["output"] == ["14", "hello"]
     _check("解释器：算术与字符串输出", ok, str(out.get("output")))
+
+
+def _test_builtins():
+    src = (
+        "print(len(range(0, 3)), len(range(3, 0)), len(range(3, 0, -1)));\n"
+        "print(type(true), type(false));\n"
+        "print(round(2.5), round(3.14159, 2), round(2.675, 2));\n"
+        "print(min(3), max(3, 1, 2));"
+    )
+    out = _run(src)
+    expected = ["3 0 3", "bool bool", "3 3.14 2.68", "3 3"]
+    ok = out.get("error") is None and out["output"] == expected
+    _check("内置函数：range 边界、bool、round 精度与变长 min/max",
+           ok, str(out.get("output") or out.get("error")))
+
+    zero_args = compiler.compile_source("print(min());")
+    arity_errors = zero_args.diagnostics.errors()
+    ok_arity = (not zero_args.success and len(arity_errors) == 1
+                and arity_errors[0].message == "函数 'min' 需要 至少 1 个参数，但传入了 0 个")
+    _check("内置函数：变长参数个数与报错数字正确", ok_arity,
+           str([e.message for e in arity_errors]))
 
 
 def _test_functions_recursion():

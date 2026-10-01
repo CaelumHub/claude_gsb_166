@@ -21,12 +21,13 @@ from .diagnostics import (
     warning_unused, warning_shadowing,
 )
 
-# 内置函数及其签名（名称 -> 参数个数或 None 表示变长）
+# 内置函数及其签名：
+# int 表示固定参数个数；None 表示任意数量；(min, max) 表示参数个数范围。
 BUILTIN_SIGNATURES = {
     "print": None, "len": 1, "push": 2, "pop": 1, "type": 1,
-    "str": 1, "int": 1, "float": 1, "range": None, "abs": 1,
-    "min": 2, "max": 2, "sqrt": 1, "floor": 1, "ceil": 1,
-    "round": None, "input": 0, "time": 0, "random": 0, "exit": 0,
+    "str": 1, "int": 1, "float": 1, "range": (1, 3), "abs": 1,
+    "min": (1, None), "max": (1, None), "sqrt": 1, "floor": 1, "ceil": 1,
+    "round": (1, 2), "input": 0, "time": 0, "random": 0, "exit": (0, 1),
 }
 
 # 运算符返回类型表（用于简单的类型推断）
@@ -38,6 +39,16 @@ def _numeric_promote(a, b):
     if a in _NUMERIC and b in _NUMERIC:
         return sym.TYPE_INT
     return sym.TYPE_UNKNOWN
+
+
+def _matches_arity(sig, count) -> bool:
+    """None 表示变长参数；(min, max) 表示允许的参数个数闭区间。"""
+    if sig is None:
+        return True
+    if isinstance(sig, int):
+        return count == sig
+    min_arity, max_arity = sig
+    return min_arity <= count and (max_arity is None or count <= max_arity)
 
 
 class SemanticAnalyzer:
@@ -321,7 +332,7 @@ class SemanticAnalyzer:
             e.callee.expr_type = sym.TYPE_FUNC
             if s.kind == sym.KIND_BUILTIN:
                 sig = BUILTIN_SIGNATURES.get(name)
-                if sig is not None and len(e.args) != sig:
+                if not _matches_arity(sig, len(e.args)):
                     self.diagnostics.add(semantic_wrong_arity(
                         name, sig, len(e.args), e.line, e.column, self._line(e)))
                 e.expr_type = sym.TYPE_UNKNOWN  # 内置函数返回类型视函数而定
